@@ -210,6 +210,18 @@ function M.validate_structure(lines, diagnostics)
     })
   end
   
+  -- Check for multiple consecutive blank lines
+  for i = 1, #lines - 1 do
+    if lines[i] == "" and lines[i + 1] == "" then
+      table.insert(diagnostics, {
+        lnum = i, col = 0, end_col = 0,
+        severity = vim.diagnostic.severity.ERROR,
+        message = "Remove extra blank line - only single blank lines allowed",
+        source = "wp-commit-msg",
+      })
+    end
+  end
+  
   -- Check blank lines before major sections
   for _, section in ipairs(sections) do
     if section.lnum > 0 and lines[section.lnum] ~= "" then

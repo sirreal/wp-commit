@@ -1,5 +1,42 @@
 local M = {}
 
+-- Parse a specific field from a CSV line (1-indexed)
+function M.parse_csv_field(csv_line, field_index)
+  local fields = {}
+  local current_field = ""
+  local in_quotes = false
+  local i = 1
+  
+  while i <= #csv_line do
+    local char = csv_line:sub(i, i)
+    
+    if char == '"' then
+      if in_quotes and i < #csv_line and csv_line:sub(i + 1, i + 1) == '"' then
+        -- Escaped quote (double quote)
+        current_field = current_field .. '"'
+        i = i + 1 -- Skip the second quote
+      else
+        -- Toggle quote state
+        in_quotes = not in_quotes
+      end
+    elseif char == ',' and not in_quotes then
+      -- Field separator
+      table.insert(fields, current_field)
+      current_field = ""
+    else
+      current_field = current_field .. char
+    end
+    
+    i = i + 1
+  end
+  
+  -- Add the last field
+  table.insert(fields, current_field)
+  
+  -- Return the requested field
+  return fields[field_index] or nil
+end
+
 -- Cache for API results to avoid repeated requests
 local cache = {}
 local cache_ttl = 300 -- 5 minutes
@@ -39,11 +76,8 @@ function M.validate_ticket(ticket_num, callback)
         local data_line = lines[2]
         if data_line and data_line ~= "" then
           exists = true
-          -- Extract title (second column after id)
-          local cols = vim.split(data_line, ",")
-          if #cols >= 2 then
-            title = cols[2]:gsub('"', '') -- Remove quotes
-          end
+          -- Extract title using proper CSV parsing
+          title = M.parse_csv_field(data_line, 2) -- Get second column (summary)
         end
       end
     end
