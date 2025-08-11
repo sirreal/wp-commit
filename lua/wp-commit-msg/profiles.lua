@@ -14,55 +14,54 @@ local function is_cache_valid(cache_entry)
 	return cache_entry and (get_timestamp() - cache_entry.timestamp) < cache_ttl
 end
 
--- Validate a WordPress.org username exists
+-- Validate a WordPress.org username exists and get full name
 function M.validate_username(username, callback)
 	local cache_key = "profile_" .. username
 
 	-- Check cache first
 	if is_cache_valid(cache[cache_key]) then
-		callback(cache[cache_key].exists)
+		callback(cache[cache_key].exists, cache[cache_key].full_name)
 		return
 	end
 
-	-- Make HEAD request to check if profile exists
+	-- Make full GET request to get profile title for full name
 	local encoded_username = username:gsub("([^%w%-_])", function(c)
 		return string.format("%%%02X", string.byte(c))
 	end)
 	local url = "https://profiles.wordpress.org/" .. encoded_username .. "/"
 
-	vim.system({ "curl", "-s", "-I", url }, {}, function(result)
+	vim.system({ "curl", "-s", "-w", "%{http_code}", url }, {}, function(result)
 		local exists = false
+		local full_name = nil
 
 		if result.code == 0 and result.stdout then
-			-- Debug: print the raw response
-			-- print("Raw response for " .. username .. ":")
-			-- print(result.stdout)
+			-- Extract HTTP status code from the end of response
+			local http_code = string.match(result.stdout, "(%d+)$")
+			local response_body = string.gsub(result.stdout, "%d+$", "")
 
-			-- Check HTTP status code in response headers
-			local status_match = string.match(result.stdout, "HTTP/[%d%.]+%s+(%d+)")
-			if status_match then
-				local status_code = tonumber(status_match)
-				-- 2xx status codes mean the profile exists
-				exists = status_code >= 200 and status_code < 300
-
-			-- Debug: print status code
-			-- print("Status code for " .. username .. ": " .. status_code .. " -> " .. tostring(exists))
-			else
-				-- Debug: no status match found
-				-- print("No status match found for " .. username)
+			-- Only parse if we got a 2xx status code
+			if http_code and tonumber(http_code) >= 200 and tonumber(http_code) < 300 then
+				exists = true
+				-- Extract full name from title element
+				local title_match = string.match(response_body, "<title>([^<]+)</title>")
+				if title_match then
+					-- Parse: "Jon Surrell (@jonsurrell) &#8211; WordPress user profile | WordPress.org"
+					local name_match = string.match(title_match, "^([^%(]+)%s*%(")
+					if name_match then
+						full_name = name_match:gsub("^%s+", ""):gsub("%s+$", "") -- trim whitespace
+					end
+				end
 			end
-		else
-			-- Debug: curl failed
-			-- print("Curl failed for " .. username .. ": code=" .. tostring(result.code))
 		end
 
 		-- Cache result
 		cache[cache_key] = {
 			exists = exists,
+			full_name = full_name,
 			timestamp = get_timestamp(),
 		}
 
-		callback(exists)
+		callback(exists, full_name)
 	end)
 end
 
@@ -78,8 +77,8 @@ function M.validate_usernames(usernames, callback)
 	end
 
 	for _, username in ipairs(usernames) do
-		M.validate_username(username, function(exists)
-			results[username] = exists
+		M.validate_username(username, function(exists, full_name)
+			results[username] = { exists = exists, full_name = full_name }
 			completed = completed + 1
 
 			if completed == total then

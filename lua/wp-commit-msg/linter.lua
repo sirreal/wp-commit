@@ -752,19 +752,36 @@ function M.update_props_virtual_text(bufnr, lnum, usernames, results)
 		end
 
 		-- Add inline status for each username
+		local valid_users_with_names = {}
 		for _, username in ipairs(usernames) do
 			local pattern = "(" .. vim.pesc(username) .. ")"
 			local start_col, end_col = string.find(line_text, pattern)
 
 			if start_col and end_col then
-				local status = results[username] and " ✓" or " ✗"
-				local hl = results[username] and "DiagnosticOk" or "DiagnosticError"
+				local user_data = results[username]
+				local exists = user_data and user_data.exists or false
+				local status = exists and " ✓" or " ✗"
+				local hl = exists and "DiagnosticOk" or "DiagnosticError"
 
 				vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, end_col, {
 					virt_text = { { status, hl } },
 					virt_text_pos = "inline",
 				})
+
+				-- Collect valid users with full names for virtual line
+				if exists and user_data.full_name then
+					table.insert(valid_users_with_names, user_data.full_name .. " (" .. username .. ")")
+				end
 			end
+		end
+
+		-- Add virtual line showing full names of valid users
+		if #valid_users_with_names > 0 then
+			local message = " → " .. table.concat(valid_users_with_names, ", ")
+			vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
+				virt_lines = { { { message, "DiagnosticInfo" } } },
+				virt_lines_above = false,
+			})
 		end
 	end)
 end
