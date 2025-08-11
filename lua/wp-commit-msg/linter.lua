@@ -8,6 +8,11 @@ local virt_ns = vim.api.nvim_create_namespace("wp-commit-msg-virtual")
 -- Debounce timer for validation
 local validation_timer = nil
 
+-- Storage for virtual lines per line (to ensure proper ordering)
+local virtual_lines_cache = {}
+local pending_requests = {} -- Track pending async requests per line
+
+
 -- Attach linter to a buffer
 function M.attach(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -27,6 +32,7 @@ function M.attach(bufnr)
     end,
   })
   
+  
   -- Initial validation
   M.validate_buffer(bufnr)
 end
@@ -45,6 +51,19 @@ function M.validate_buffer(bufnr)
     -- Clear all existing virtual text first
     vim.api.nvim_buf_clear_namespace(bufnr, virt_ns, 0, -1)
     
+    -- Clear virtual lines cache and pending requests for this buffer
+    for cache_key, _ in pairs(virtual_lines_cache) do
+      if cache_key:match("^" .. bufnr .. ":") then
+        virtual_lines_cache[cache_key] = nil
+      end
+    end
+    for pending_key, _ in pairs(pending_requests) do
+      if pending_key:match("^" .. bufnr .. ":") then
+        pending_requests[pending_key] = nil
+      end
+    end
+    
+    
     -- Validate summary line
     M.validate_summary_line(lines, diagnostics)
     
@@ -53,6 +72,9 @@ function M.validate_buffer(bufnr)
     
     -- Validate section content
     M.validate_sections(lines, diagnostics)
+    
+    -- Count and validate all ticket/changeset references (must be done before section validation)
+    M.count_and_validate_references(lines, diagnostics)
     
     -- Validate ticket and changeset references
     M.validate_references(lines, diagnostics)
@@ -377,14 +399,6 @@ function M.validate_fixes_line(line, lnum, diagnostics)
     })
   end
   
-  -- Validate ticket number format and existence
-  local bufnr = vim.api.nvim_get_current_buf()
-  for ticket_match in string.gmatch(line, "(#%d+)") do
-    local ticket_num = string.match(ticket_match, "#(%d+)")
-    trac.validate_ticket(ticket_num, function(exists, title)
-      M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
-    end)
-  end
 end
 
 -- Validate See line: "See #12345, #67890."
@@ -419,14 +433,6 @@ function M.validate_see_line(line, lnum, diagnostics)
     })
   end
   
-  -- Validate ticket number format and existence
-  local bufnr = vim.api.nvim_get_current_buf()
-  for ticket_match in string.gmatch(line, "(#%d+)") do
-    local ticket_num = string.match(ticket_match, "#(%d+)")
-    trac.validate_ticket(ticket_num, function(exists, title)
-      M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
-    end)
-  end
 end
 
 -- Validate Follow-up line: "Follow-up to [12345], [67890]."
@@ -461,14 +467,6 @@ function M.validate_followup_line(line, lnum, diagnostics)
     })
   end
   
-  -- Validate changeset number format and existence
-  local bufnr = vim.api.nvim_get_current_buf()
-  for changeset_match in string.gmatch(line, "(%[%d+%])") do
-    local changeset_num = string.match(changeset_match, "%[(%d+)%]")
-    trac.validate_changeset(changeset_num, function(exists, message)
-      M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
-    end)
-  end
 end
 
 -- Validate Reviewed by line: "Reviewed by username, another."
@@ -527,6 +525,50 @@ function M.validate_merges_line(line, lnum, diagnostics)
   end
 end
 
+-- Count and validate all ticket/changeset references per line
+function M.count_and_validate_references(lines, diagnostics)
+  local bufnr = vim.api.nvim_get_current_buf()
+  
+  for i, line in ipairs(lines) do
+    local lnum = i - 1
+    local total_references = 0
+    
+    -- Count all tickets and changesets on this line
+    local tickets = {}
+    for ticket_match in string.gmatch(line, "(#%d+)") do
+      local ticket_num = string.match(ticket_match, "#(%d+)")
+      table.insert(tickets, ticket_num)
+      total_references = total_references + 1
+    end
+    
+    local changesets = {}
+    for changeset_match in string.gmatch(line, "(%[%d+%])") do
+      local changeset_num = string.match(changeset_match, "%[(%d+)%]")
+      table.insert(changesets, changeset_num)
+      total_references = total_references + 1
+    end
+    
+    -- If we have any references on this line, initialize and validate them
+    if total_references > 0 then
+      M.init_pending_requests(bufnr, lnum, total_references)
+      
+      -- Validate all tickets
+      for _, ticket_num in ipairs(tickets) do
+        trac.validate_ticket(ticket_num, function(exists, title)
+          M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+        end)
+      end
+      
+      -- Validate all changesets
+      for _, changeset_num in ipairs(changesets) do
+        trac.validate_changeset(changeset_num, function(exists, message)
+          M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+        end)
+      end
+    end
+  end
+end
+
 -- Validate ticket (#123) and changeset ([123]) references
 function M.validate_references(lines, diagnostics)
   for i, line in ipairs(lines) do
@@ -562,62 +604,176 @@ function M.validate_references(lines, diagnostics)
   end
 end
 
+-- Helper functions for managing virtual lines ordering
+
+-- Initialize pending requests counter for a line
+function M.init_pending_requests(bufnr, lnum, count)
+  local pending_key = bufnr .. ":" .. lnum
+  pending_requests[pending_key] = count
+  
+  -- Clear any existing cache for this line
+  local cache_key = bufnr .. ":" .. lnum
+  virtual_lines_cache[cache_key] = {}
+end
+
+-- Add a virtual line to the cache and check if we should apply
+function M.add_virtual_line(bufnr, lnum, position, content, hl_group)
+  local cache_key = bufnr .. ":" .. lnum
+  local pending_key = bufnr .. ":" .. lnum
+  
+  if not virtual_lines_cache[cache_key] then
+    virtual_lines_cache[cache_key] = {}
+  end
+  
+  table.insert(virtual_lines_cache[cache_key], {
+    position = position,
+    content = content,
+    hl_group = hl_group
+  })
+  
+  -- Decrement pending counter
+  if pending_requests[pending_key] then
+    pending_requests[pending_key] = pending_requests[pending_key] - 1
+    
+    -- If all requests are complete, apply virtual lines
+    if pending_requests[pending_key] <= 0 then
+      M.apply_virtual_lines(bufnr, lnum)
+      pending_requests[pending_key] = nil
+    end
+  end
+end
+
+-- Apply all cached virtual lines for a specific buffer and line
+function M.apply_virtual_lines(bufnr, lnum)
+  local cache_key = bufnr .. ":" .. lnum
+  local line_cache = virtual_lines_cache[cache_key]
+  
+  if line_cache and #line_cache > 0 then
+    -- Sort by position to ensure correct order
+    table.sort(line_cache, function(a, b) return a.position < b.position end)
+    
+    -- Create virtual lines array
+    local virt_lines = {}
+    for _, item in ipairs(line_cache) do
+      table.insert(virt_lines, {{item.content, item.hl_group}})
+    end
+    
+    vim.schedule(function()
+      vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
+        virt_lines = virt_lines,
+        virt_lines_above = false
+      })
+    end)
+  end
+end
+
 -- Virtual text functions for API validation results
 
 -- Update virtual text for Props usernames
 function M.update_props_virtual_text(bufnr, lnum, usernames, results)
   vim.schedule(function()
-    local virt_text = {}
-    for _, username in ipairs(usernames) do
-      local status = results[username] and "✓" or "✗"
-      local hl = results[username] and "DiagnosticOk" or "DiagnosticError"
-      table.insert(virt_text, {status .. " " .. username, hl})
-      table.insert(virt_text, {" ", "Normal"})
+    local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
+    
+    -- Clear existing extmarks for this line
+    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
+    for _, extmark in ipairs(extmarks) do
+      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
     end
     
-    vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
-      virt_text = virt_text,
-      virt_text_pos = "eol"
-    })
+    -- Add inline status for each username
+    for _, username in ipairs(usernames) do
+      local pattern = "(" .. vim.pesc(username) .. ")"
+      local start_col, end_col = string.find(line_text, pattern)
+      
+      if start_col and end_col then
+        local status = results[username] and " ✓" or " ✗"
+        local hl = results[username] and "DiagnosticOk" or "DiagnosticError"
+        
+        vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, end_col, {
+          virt_text = {{status, hl}},
+          virt_text_pos = "inline"
+        })
+      end
+    end
   end)
 end
+
 
 -- Update virtual text for ticket validation
 function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
   vim.schedule(function()
-    local virt_text = {}
-    if exists and title then
-      table.insert(virt_text, {"→ " .. title, "DiagnosticInfo"})
-    elseif exists then
-      table.insert(virt_text, {"→ Ticket #" .. ticket_num .. " exists", "DiagnosticOk"})
-    else
-      table.insert(virt_text, {"→ Ticket #" .. ticket_num .. " not found", "DiagnosticError"})
-    end
+    local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
     
-    vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
-      virt_text = virt_text,
-      virt_text_pos = "eol"
-    })
+    -- Find the ticket reference in the line to get its position
+    local pattern = "#" .. ticket_num
+    local start_col, end_col = string.find(line_text, vim.pesc(pattern))
+    
+    if start_col and end_col then
+      local status = exists and " ✓" or " ✗"
+      local hl = exists and "DiagnosticOk" or "DiagnosticError"
+      
+      -- Add status right after the ticket reference
+      vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, end_col, {
+        virt_text = {{status, hl}},
+        virt_text_pos = "inline"
+      })
+      
+      -- Add detailed info to virtual lines cache (using start_col for ordering)
+      local content
+      if exists and title then
+        content = " → " .. title
+        hl = "DiagnosticInfo"
+      elseif exists then
+        content = " → Ticket #" .. ticket_num .. " exists"
+        hl = "DiagnosticOk"
+      else
+        content = " → Ticket #" .. ticket_num .. " not found"
+        hl = "DiagnosticError"
+      end
+      
+      M.add_virtual_line(bufnr, lnum, start_col, content, hl)
+    end
   end)
 end
+
 
 -- Update virtual text for changeset validation
 function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
   vim.schedule(function()
-    local virt_text = {}
-    if exists and message then
-      table.insert(virt_text, {"→ " .. message, "DiagnosticInfo"})
-    elseif exists then
-      table.insert(virt_text, {"→ Changeset [" .. changeset_num .. "] exists", "DiagnosticOk"})
-    else
-      table.insert(virt_text, {"→ Changeset [" .. changeset_num .. "] not found", "DiagnosticError"})
-    end
+    local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
     
-    vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
-      virt_text = virt_text,
-      virt_text_pos = "eol"
-    })
+    -- Find the changeset reference in the line to get its position
+    local pattern = "%[" .. changeset_num .. "%]"
+    local start_col, end_col = string.find(line_text, pattern)
+    
+    if start_col and end_col then
+      local status = exists and " ✓" or " ✗"
+      local hl = exists and "DiagnosticOk" or "DiagnosticError"
+      
+      -- Add status right after the changeset reference
+      vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, end_col, {
+        virt_text = {{status, hl}},
+        virt_text_pos = "inline"
+      })
+      
+      -- Add detailed info to virtual lines cache (using start_col for ordering)
+      local content
+      if exists and message then
+        content = " → " .. message
+        hl = "DiagnosticInfo"
+      elseif exists then
+        content = " → Changeset [" .. changeset_num .. "] exists"
+        hl = "DiagnosticOk"
+      else
+        content = " → Changeset [" .. changeset_num .. "] not found"
+        hl = "DiagnosticError"
+      end
+      
+      M.add_virtual_line(bufnr, lnum, start_col, content, hl)
+    end
   end)
 end
+
+
 
 return M
