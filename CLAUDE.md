@@ -86,6 +86,7 @@ Fixes #30000. See #20202, #105.
 - **Setup:** Install treesitter grammar: `npm install` (for building tree-sitter-wordpress-commit)
 - **Test:** Manual testing with sample commit messages in Neovim
 - **Lint:** Standard Lua linting via `luacheck` if available
+- **Format:** All Lua code is formatted with `stylua` - ensure new code follows the same formatting standards
 
 ## File Structure
 
