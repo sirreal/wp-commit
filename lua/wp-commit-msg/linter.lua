@@ -1,4 +1,6 @@
 local M = {}
+local trac = require("wp-commit-msg.trac")
+local profiles = require("wp-commit-msg.profiles")
 
 -- Attach linter to a buffer
 function M.attach(bufnr)
@@ -258,7 +260,8 @@ function M.validate_props_line(line, lnum, diagnostics)
   -- Extract and validate usernames
   local props_content = string.match(line, "^Props%s+(.+)%.$")
   if props_content then
-    -- Split by comma and validate each username
+    local usernames = {}
+    -- Split by comma and collect usernames
     for username in string.gmatch(props_content, "([^,]+)") do
       username = string.match(username, "^%s*(.-)%s*$") -- trim spaces
       if not string.match(username, "^[a-zA-Z0-9_%-]+$") then
@@ -268,8 +271,17 @@ function M.validate_props_line(line, lnum, diagnostics)
           message = "Invalid username format: '" .. username .. "'",
           source = "wp-commit-msg",
         })
+      else
+        table.insert(usernames, username)
       end
-      -- TODO: Validate username exists on WordPress.org
+    end
+    
+    -- Validate usernames exist on WordPress.org
+    if #usernames > 0 then
+      local bufnr = vim.api.nvim_get_current_buf()
+      profiles.validate_usernames(usernames, function(results)
+        M.update_props_virtual_text(bufnr, lnum, usernames, results)
+      end)
     end
   end
 end
@@ -306,9 +318,13 @@ function M.validate_fixes_line(line, lnum, diagnostics)
     })
   end
   
-  -- Validate ticket number format
+  -- Validate ticket number format and existence
+  local bufnr = vim.api.nvim_get_current_buf()
   for ticket_match in string.gmatch(line, "(#%d+)") do
-    -- TODO: Validate ticket exists via API
+    local ticket_num = string.match(ticket_match, "#(%d+)")
+    trac.validate_ticket(ticket_num, function(exists, title)
+      M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+    end)
   end
 end
 
@@ -343,6 +359,15 @@ function M.validate_see_line(line, lnum, diagnostics)
       source = "wp-commit-msg",
     })
   end
+  
+  -- Validate ticket number format and existence
+  local bufnr = vim.api.nvim_get_current_buf()
+  for ticket_match in string.gmatch(line, "(#%d+)") do
+    local ticket_num = string.match(ticket_match, "#(%d+)")
+    trac.validate_ticket(ticket_num, function(exists, title)
+      M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+    end)
+  end
 end
 
 -- Validate Follow-up line: "Follow-up to [12345], [67890]."
@@ -365,6 +390,15 @@ function M.validate_followup_line(line, lnum, diagnostics)
       message = "Follow-up line must end with period",
       source = "wp-commit-msg",
     })
+  end
+  
+  -- Validate changeset number format and existence
+  local bufnr = vim.api.nvim_get_current_buf()
+  for changeset_match in string.gmatch(line, "(%[%d+%])") do
+    local changeset_num = string.match(changeset_match, "%[(%d+)%]")
+    trac.validate_changeset(changeset_num, function(exists, message)
+      M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+    end)
   end
 end
 
@@ -437,6 +471,85 @@ function M.validate_references(lines, diagnostics)
       })
     end
   end
+end
+
+-- Virtual text functions for API validation results
+
+-- Namespace for virtual text
+local virt_ns = vim.api.nvim_create_namespace("wp-commit-msg-virtual")
+
+-- Update virtual text for Props usernames
+function M.update_props_virtual_text(bufnr, lnum, usernames, results)
+  vim.schedule(function()
+    -- Clear existing virtual text for this line first
+    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
+    for _, extmark in ipairs(extmarks) do
+      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
+    end
+    
+    local virt_text = {}
+    for _, username in ipairs(usernames) do
+      local status = results[username] and "✓" or "✗"
+      local hl = results[username] and "DiagnosticOk" or "DiagnosticError"
+      table.insert(virt_text, {status .. " " .. username, hl})
+      table.insert(virt_text, {" ", "Normal"})
+    end
+    
+    vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
+      virt_text = virt_text,
+      virt_text_pos = "eol"
+    })
+  end)
+end
+
+-- Update virtual text for ticket validation
+function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+  vim.schedule(function()
+    -- Clear existing virtual text for this line first
+    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
+    for _, extmark in ipairs(extmarks) do
+      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
+    end
+    
+    local virt_text = {}
+    if exists and title then
+      table.insert(virt_text, {"→ " .. title, "DiagnosticInfo"})
+    elseif exists then
+      table.insert(virt_text, {"→ Ticket #" .. ticket_num .. " exists", "DiagnosticOk"})
+    else
+      table.insert(virt_text, {"→ Ticket #" .. ticket_num .. " not found", "DiagnosticError"})
+    end
+    
+    vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
+      virt_text = virt_text,
+      virt_text_pos = "eol"
+    })
+  end)
+end
+
+-- Update virtual text for changeset validation
+function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+  vim.schedule(function()
+    -- Clear existing virtual text for this line first
+    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
+    for _, extmark in ipairs(extmarks) do
+      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
+    end
+    
+    local virt_text = {}
+    if exists and message then
+      table.insert(virt_text, {"→ " .. message, "DiagnosticInfo"})
+    elseif exists then
+      table.insert(virt_text, {"→ Changeset [" .. changeset_num .. "] exists", "DiagnosticOk"})
+    else
+      table.insert(virt_text, {"→ Changeset [" .. changeset_num .. "] not found", "DiagnosticError"})
+    end
+    
+    vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, 0, {
+      virt_text = virt_text,
+      virt_text_pos = "eol"
+    })
+  end)
 end
 
 return M
