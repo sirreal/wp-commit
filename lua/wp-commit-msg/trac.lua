@@ -64,20 +64,27 @@ function M.validate_ticket(ticket_num, callback)
   -- Make API request
   local url = "https://core.trac.wordpress.org/ticket/" .. ticket_num .. "?format=csv"
   
-  vim.system({"curl", "-s", url}, {}, function(result)
+  vim.system({"curl", "-s", "-w", "%{http_code}", url}, {}, function(result)
     local exists = false
     local title = nil
     
     if result.code == 0 and result.stdout then
-      -- Parse CSV response - if we get valid CSV data, ticket exists
-      local lines = vim.split(result.stdout, "\n")
-      if #lines >= 2 then
-        -- Second line contains the ticket data
-        local data_line = lines[2]
-        if data_line and data_line ~= "" then
-          exists = true
-          -- Extract title using proper CSV parsing
-          title = M.parse_csv_field(data_line, 2) -- Get second column (summary)
+      -- Extract HTTP status code from the end of response
+      local http_code = string.match(result.stdout, "(%d+)$")
+      local response_body = string.gsub(result.stdout, "%d+$", "")
+      
+      -- Only parse if we got a 2xx status code
+      if http_code and tonumber(http_code) >= 200 and tonumber(http_code) < 300 then
+        -- Parse CSV response - if we get valid CSV data, ticket exists
+        local lines = vim.split(response_body, "\n")
+        if #lines >= 2 then
+          -- Second line contains the ticket data
+          local data_line = lines[2]
+          if data_line and data_line ~= "" then
+            exists = true
+            -- Extract title using proper CSV parsing
+            title = M.parse_csv_field(data_line, 2) -- Get second column (summary)
+          end
         end
       end
     end
@@ -106,20 +113,27 @@ function M.validate_changeset(changeset_num, callback)
   -- Make API request
   local url = "https://core.trac.wordpress.org/changeset/" .. changeset_num
   
-  vim.system({"curl", "-s", url}, {}, function(result)
+  vim.system({"curl", "-s", "-w", "%{http_code}", url}, {}, function(result)
     local exists = false
     local message = nil
     
     if result.code == 0 and result.stdout then
-      -- Check if we got a valid changeset page (not 404)
-      if not string.match(result.stdout, "No such changeset") then
-        exists = true
-        -- Extract commit message from #overview section
-        local overview_match = string.match(result.stdout, '<dl id="overview".-</dl>')
-        if overview_match then
-          local message_match = string.match(overview_match, '<dt>Message:</dt>%s*<dd[^>]*>%s*([^<]+)')
-          if message_match then
-            message = message_match:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+      -- Extract HTTP status code from the end of response
+      local http_code = string.match(result.stdout, "(%d+)$")
+      local response_body = string.gsub(result.stdout, "%d+$", "")
+      
+      -- Only parse if we got a 2xx status code
+      if http_code and tonumber(http_code) >= 200 and tonumber(http_code) < 300 then
+        -- Check if we got a valid changeset page (not 404)
+        if not string.match(response_body, "No such changeset") then
+          exists = true
+          -- Extract commit message from #overview section
+          local overview_match = string.match(response_body, '<dl id="overview".-</dl>')
+          if overview_match then
+            local message_match = string.match(overview_match, '<dt>Message:</dt>%s*<dd[^>]*>%s*([^<]+)')
+            if message_match then
+              message = message_match:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+            end
           end
         end
       end
