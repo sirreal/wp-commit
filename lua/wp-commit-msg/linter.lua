@@ -12,6 +12,9 @@ local validation_timer = nil
 local virtual_lines_cache = {}
 local pending_requests = {} -- Track pending async requests per line
 
+-- Validation generation counter to cancel stale async results
+local validation_generation = 0
+
 -- Attach linter to a buffer
 function M.attach(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -46,6 +49,10 @@ function M.validate_buffer(bufnr)
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		local diagnostics = {}
 
+		-- Increment validation generation to cancel stale async results
+		validation_generation = validation_generation + 1
+		local current_generation = validation_generation
+
 		-- Clear all existing virtual text first
 		vim.api.nvim_buf_clear_namespace(bufnr, virt_ns, 0, -1)
 
@@ -71,7 +78,7 @@ function M.validate_buffer(bufnr)
 		M.validate_sections(lines, diagnostics)
 
 		-- Count and validate all ticket/changeset references (must be done before section validation)
-		M.count_and_validate_references(lines, diagnostics)
+		M.count_and_validate_references(lines, diagnostics, bufnr, current_generation)
 
 		-- Validate ticket and changeset references
 		M.validate_references(lines, diagnostics)
@@ -387,8 +394,12 @@ function M.validate_props_line(line, lnum, diagnostics)
 		-- Validate usernames exist on WordPress.org
 		if #usernames > 0 then
 			local bufnr = vim.api.nvim_get_current_buf()
+			local current_gen = validation_generation
 			profiles.validate_usernames(usernames, function(results)
-				M.update_props_virtual_text(bufnr, lnum, usernames, results)
+				-- Only apply results if this validation is still current
+				if current_gen == validation_generation then
+					M.update_props_virtual_text(bufnr, lnum, usernames, results)
+				end
 			end)
 		end
 	end
@@ -578,9 +589,7 @@ function M.validate_merges_line(line, lnum, diagnostics)
 end
 
 -- Count and validate all ticket/changeset references per line
-function M.count_and_validate_references(lines, diagnostics)
-	local bufnr = vim.api.nvim_get_current_buf()
-
+function M.count_and_validate_references(lines, diagnostics, bufnr, generation)
 	for i, line in ipairs(lines) do
 		local lnum = i - 1
 		local total_references = 0
@@ -607,14 +616,20 @@ function M.count_and_validate_references(lines, diagnostics)
 			-- Validate all tickets
 			for _, ticket_num in ipairs(tickets) do
 				trac.validate_ticket(ticket_num, function(exists, title)
-					M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+					-- Only apply results if this validation is still current
+					if generation == validation_generation then
+						M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+					end
 				end)
 			end
 
 			-- Validate all changesets
 			for _, changeset_num in ipairs(changesets) do
 				trac.validate_changeset(changeset_num, function(exists, message)
-					M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+					-- Only apply results if this validation is still current
+					if generation == validation_generation then
+						M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+					end
 				end)
 			end
 		end
