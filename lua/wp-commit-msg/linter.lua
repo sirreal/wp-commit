@@ -2,13 +2,27 @@ local M = {}
 local trac = require("wp-commit-msg.trac")
 local profiles = require("wp-commit-msg.profiles")
 
+-- Namespace for virtual text
+local virt_ns = vim.api.nvim_create_namespace("wp-commit-msg-virtual")
+
+-- Debounce timer for validation
+local validation_timer = nil
+
 -- Attach linter to a buffer
 function M.attach(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   
-  -- Basic validation for now - we'll expand this
+  -- Attach to buffer changes
   vim.api.nvim_buf_attach(bufnr, false, {
     on_lines = function()
+      M.validate_buffer(bufnr)
+    end,
+  })
+  
+  -- Also listen for text changes (catches joins, deletions, etc.)
+  vim.api.nvim_create_autocmd({"TextChanged", "TextChangedI"}, {
+    buffer = bufnr,
+    callback = function()
       M.validate_buffer(bufnr)
     end,
   })
@@ -19,23 +33,33 @@ end
 
 -- Validate WordPress commit message format
 function M.validate_buffer(bufnr)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local diagnostics = {}
+  -- Debounce validation to prevent rapid fire
+  if validation_timer then
+    vim.fn.timer_stop(validation_timer)
+  end
   
-  -- Validate summary line
-  M.validate_summary_line(lines, diagnostics)
-  
-  -- Validate overall structure and ordering
-  M.validate_structure(lines, diagnostics)
-  
-  -- Validate section content
-  M.validate_sections(lines, diagnostics)
-  
-  -- Validate ticket and changeset references
-  M.validate_references(lines, diagnostics)
-  
-  -- Set diagnostics
-  vim.diagnostic.set(vim.api.nvim_create_namespace("wp-commit-msg"), bufnr, diagnostics)
+  validation_timer = vim.fn.timer_start(100, function()
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local diagnostics = {}
+    
+    -- Clear all existing virtual text first
+    vim.api.nvim_buf_clear_namespace(bufnr, virt_ns, 0, -1)
+    
+    -- Validate summary line
+    M.validate_summary_line(lines, diagnostics)
+    
+    -- Validate overall structure and ordering
+    M.validate_structure(lines, diagnostics)
+    
+    -- Validate section content
+    M.validate_sections(lines, diagnostics)
+    
+    -- Validate ticket and changeset references
+    M.validate_references(lines, diagnostics)
+    
+    -- Set diagnostics
+    vim.diagnostic.set(vim.api.nvim_create_namespace("wp-commit-msg"), bufnr, diagnostics)
+  end)
 end
 
 -- Validate the first line (summary)
@@ -164,13 +188,36 @@ function M.validate_structure(lines, diagnostics)
     end
   end
   
+  -- Check for separate Fixes/See lines (should be combined)
+  local fixes_line = nil
+  local see_line = nil
+  for _, section in ipairs(sections) do
+    if section.type == "tickets" then
+      if string.match(section.line, "^Fixes%s+") then
+        fixes_line = section.lnum
+      elseif string.match(section.line, "^See%s+") then
+        see_line = section.lnum
+      end
+    end
+  end
+  
+  if fixes_line and see_line and fixes_line ~= see_line then
+    table.insert(diagnostics, {
+      lnum = see_line, col = 0, end_col = #lines[see_line + 1],
+      severity = vim.diagnostic.severity.ERROR,
+      message = "Fixes and See should be on the same line: 'Fixes #123. See #456.'",
+      source = "wp-commit-msg",
+    })
+  end
+  
   -- Check blank lines before major sections
   for _, section in ipairs(sections) do
     if section.lnum > 0 and lines[section.lnum] ~= "" then
+      local section_name = section.type == "tickets" and "ticket references" or section.type
       table.insert(diagnostics, {
         lnum = section.lnum - 1, col = 0, end_col = 0,
         severity = vim.diagnostic.severity.WARN,
-        message = "Blank line recommended before " .. section.type .. " section",
+        message = "Add blank line before " .. section_name .. " section",
         source = "wp-commit-msg",
       })
     end
@@ -207,18 +254,18 @@ function M.validate_sections(lines, diagnostics)
       M.validate_see_line(line, lnum, diagnostics)
     end
     
-    -- Check Follow-up section format
-    if string.match(line, "^Follow%-up to%s+") then
+    -- Check Follow-up section format (case-insensitive detection, but validate capitalization)
+    if string.match(string.lower(line), "^follow%-up to%s+") then
       M.validate_followup_line(line, lnum, diagnostics)
     end
     
-    -- Check Reviewed by section format
-    if string.match(line, "^Reviewed by%s+") then
+    -- Check Reviewed by section format (case-insensitive detection, but validate capitalization)
+    if string.match(string.lower(line), "^reviewed by%s+") then
       M.validate_reviewed_line(line, lnum, diagnostics)
     end
     
-    -- Check Merges section format
-    if string.match(line, "^Merges%s+") then
+    -- Check Merges section format (case-insensitive detection, but validate capitalization)
+    if string.match(string.lower(line), "^merges%s+") then
       M.validate_merges_line(line, lnum, diagnostics)
     end
   end
@@ -372,6 +419,16 @@ end
 
 -- Validate Follow-up line: "Follow-up to [12345], [67890]."
 function M.validate_followup_line(line, lnum, diagnostics)
+  -- Check capitalization first
+  if not string.match(line, "^Follow%-up to%s+") then
+    table.insert(diagnostics, {
+      lnum = lnum, col = 0, end_col = 9,
+      severity = vim.diagnostic.severity.ERROR,
+      message = "Should be 'Follow-up' (capitalized)",
+      source = "wp-commit-msg",
+    })
+  end
+  
   -- Check basic format - must have changeset numbers
   if not string.match(line, "%[%d+%]") then
     table.insert(diagnostics, {
@@ -404,6 +461,16 @@ end
 
 -- Validate Reviewed by line: "Reviewed by username, another."
 function M.validate_reviewed_line(line, lnum, diagnostics)
+  -- Check capitalization first
+  if not string.match(line, "^Reviewed by%s+") then
+    table.insert(diagnostics, {
+      lnum = lnum, col = 0, end_col = 11,
+      severity = vim.diagnostic.severity.ERROR,
+      message = "Should be 'Reviewed by' (capitalized)",
+      source = "wp-commit-msg",
+    })
+  end
+  
   -- Check basic format
   if not string.match(line, "^Reviewed by%s+[a-zA-Z0-9_%-]") then
     table.insert(diagnostics, {
@@ -427,6 +494,16 @@ end
 
 -- Validate Merges line: "Merges [12345] to the 6.4 branch."
 function M.validate_merges_line(line, lnum, diagnostics)
+  -- Check capitalization first
+  if not string.match(line, "^Merges%s+") then
+    table.insert(diagnostics, {
+      lnum = lnum, col = 0, end_col = 6,
+      severity = vim.diagnostic.severity.ERROR,
+      message = "Should be 'Merges' (capitalized)",
+      source = "wp-commit-msg",
+    })
+  end
+  
   -- Check format with changeset and branch
   if not string.match(line, "^Merges%s+%[%d+%]%s+to%s+the%s+[%d%.]+%s+branch%.$") then
     table.insert(diagnostics, {
@@ -475,18 +552,9 @@ end
 
 -- Virtual text functions for API validation results
 
--- Namespace for virtual text
-local virt_ns = vim.api.nvim_create_namespace("wp-commit-msg-virtual")
-
 -- Update virtual text for Props usernames
 function M.update_props_virtual_text(bufnr, lnum, usernames, results)
   vim.schedule(function()
-    -- Clear existing virtual text for this line first
-    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
-    for _, extmark in ipairs(extmarks) do
-      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
-    end
-    
     local virt_text = {}
     for _, username in ipairs(usernames) do
       local status = results[username] and "✓" or "✗"
@@ -505,12 +573,6 @@ end
 -- Update virtual text for ticket validation
 function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
   vim.schedule(function()
-    -- Clear existing virtual text for this line first
-    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
-    for _, extmark in ipairs(extmarks) do
-      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
-    end
-    
     local virt_text = {}
     if exists and title then
       table.insert(virt_text, {"→ " .. title, "DiagnosticInfo"})
@@ -530,12 +592,6 @@ end
 -- Update virtual text for changeset validation
 function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
   vim.schedule(function()
-    -- Clear existing virtual text for this line first
-    local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, virt_ns, {lnum, 0}, {lnum, -1}, {})
-    for _, extmark in ipairs(extmarks) do
-      vim.api.nvim_buf_del_extmark(bufnr, virt_ns, extmark[1])
-    end
-    
     local virt_text = {}
     if exists and message then
       table.insert(virt_text, {"→ " .. message, "DiagnosticInfo"})

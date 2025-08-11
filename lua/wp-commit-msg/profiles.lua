@@ -25,19 +25,35 @@ function M.validate_username(username, callback)
   end
   
   -- Make HEAD request to check if profile exists
-  local url = "https://profiles.wordpress.org/" .. username
+  local encoded_username = username:gsub("([^%w%-_])", function(c)
+    return string.format("%%%02X", string.byte(c))
+  end)
+  local url = "https://profiles.wordpress.org/" .. encoded_username .. "/"
   
   vim.system({"curl", "-s", "-I", url}, {}, function(result)
     local exists = false
     
     if result.code == 0 and result.stdout then
+      -- Debug: print the raw response
+      -- print("Raw response for " .. username .. ":")
+      -- print(result.stdout)
+      
       -- Check HTTP status code in response headers
       local status_match = string.match(result.stdout, "HTTP/[%d%.]+%s+(%d+)")
       if status_match then
         local status_code = tonumber(status_match)
         -- 2xx status codes mean the profile exists
         exists = status_code >= 200 and status_code < 300
+        
+        -- Debug: print status code
+        -- print("Status code for " .. username .. ": " .. status_code .. " -> " .. tostring(exists))
+      else
+        -- Debug: no status match found
+        -- print("No status match found for " .. username)
       end
+    else
+      -- Debug: curl failed
+      -- print("Curl failed for " .. username .. ": code=" .. tostring(result.code))
     end
     
     -- Cache result
