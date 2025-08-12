@@ -19,27 +19,52 @@ local validation_generation = 0
 function M.attach(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
-	-- Attach to buffer changes
-	vim.api.nvim_buf_attach(bufnr, false, {
-		on_lines = function()
-			M.validate_buffer(bufnr)
-		end,
-	})
+	-- Validate buffer is valid and not already attached
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
 
-	-- Also listen for text changes (catches joins, deletions, etc.)
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-		buffer = bufnr,
-		callback = function()
-			M.validate_buffer(bufnr)
+	-- Check if already attached (avoid duplicate listeners)
+	local existing_var = vim.b[bufnr].wp_commit_msg_attached
+	if existing_var then
+		return true -- Already attached
+	end
+
+	-- Mark as attached
+	vim.b[bufnr].wp_commit_msg_attached = true
+
+	-- Use buffer attachment for text changes (more efficient than autocmds)
+	vim.api.nvim_buf_attach(bufnr, false, {
+		on_lines = function(_, buf)
+			-- Double-check buffer is still valid
+			if vim.api.nvim_buf_is_valid(buf) then
+				M.validate_buffer(buf)
+			end
+		end,
+		on_detach = function(_, buf)
+			-- Clean up when buffer is closed
+			vim.b[buf].wp_commit_msg_attached = nil
 		end,
 	})
 
 	-- Initial validation
 	M.validate_buffer(bufnr)
+	return true
 end
 
 -- Validate WordPress commit message format
 function M.validate_buffer(bufnr)
+	-- Safety checks
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+
+	-- Don't validate if buffer is too large (performance)
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	if line_count > 500 then -- Commit messages shouldn't be this long
+		return
+	end
+
 	-- Debounce validation to prevent rapid fire
 	if validation_timer then
 		vim.fn.timer_stop(validation_timer)
@@ -858,6 +883,35 @@ function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, mes
 			M.add_virtual_line(bufnr, lnum, start_col, content, hl)
 		end
 	end)
+end
+
+-- Cleanup function for memory management
+function M.cleanup()
+	-- Stop any running validation timer
+	if validation_timer then
+		vim.fn.timer_stop(validation_timer)
+		validation_timer = nil
+	end
+
+	-- Clear all caches
+	virtual_lines_cache = {}
+	pending_requests = {}
+
+	-- Reset validation generation
+	validation_generation = 0
+
+	-- Clear namespace
+	vim.api.nvim_buf_clear_namespace(0, virt_ns, 0, -1)
+end
+
+-- Expose some internal state for debugging
+function M._debug_info()
+	return {
+		validation_generation = validation_generation,
+		cache_size = vim.tbl_count(virtual_lines_cache),
+		pending_size = vim.tbl_count(pending_requests),
+		timer_active = validation_timer ~= nil,
+	}
 end
 
 return M

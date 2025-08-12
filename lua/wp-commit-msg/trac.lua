@@ -40,6 +40,11 @@ end
 -- Cache for API results to avoid repeated requests
 local cache = {}
 local cache_ttl = 300 -- 5 minutes
+local max_cache_size = 1000 -- Prevent unlimited cache growth
+
+-- Rate limiting
+local last_request_time = 0
+local min_request_interval = 100 -- 100ms between requests
 
 -- Get current timestamp
 local function get_timestamp()
@@ -51,8 +56,31 @@ local function is_cache_valid(cache_entry)
 	return cache_entry and (get_timestamp() - cache_entry.timestamp) < cache_ttl
 end
 
+-- Clean old cache entries if cache is too large
+local function cleanup_cache()
+	local cache_size = 0
+	for _ in pairs(cache) do
+		cache_size = cache_size + 1
+	end
+
+	if cache_size > max_cache_size then
+		local current_time = get_timestamp()
+		for key, entry in pairs(cache) do
+			if (current_time - entry.timestamp) > cache_ttl then
+				cache[key] = nil
+			end
+		end
+	end
+end
+
 -- Validate a ticket number exists
 function M.validate_ticket(ticket_num, callback)
+	-- Input validation
+	if not ticket_num or ticket_num == "" or not string.match(ticket_num, "^%d+$") then
+		callback(false, nil)
+		return
+	end
+
 	local cache_key = "ticket_" .. ticket_num
 
 	-- Check cache first
@@ -61,14 +89,39 @@ function M.validate_ticket(ticket_num, callback)
 		return
 	end
 
+	-- Rate limiting - simple throttling
+	local current_time = vim.loop.hrtime() / 1000000 -- Convert to milliseconds
+	if (current_time - last_request_time) < min_request_interval then
+		vim.defer_fn(function()
+			M.validate_ticket(ticket_num, callback)
+		end, min_request_interval)
+		return
+	end
+	last_request_time = current_time
+
+	-- Clean cache periodically
+	cleanup_cache()
+
 	-- Make API request
 	local url = "https://core.trac.wordpress.org/ticket/" .. ticket_num .. "?format=csv"
 
-	vim.system({ "curl", "-s", "-w", "%{http_code}", url }, {}, function(result)
+	vim.system({ "curl", "-s", "-w", "%{http_code}", "--max-time", "10", url }, {}, function(result)
 		local exists = false
 		local title = nil
 
-		if result.code == 0 and result.stdout then
+		-- Handle curl errors
+		if result.code ~= 0 then
+			-- Network error - cache as failed but don't show error to user
+			cache[cache_key] = {
+				exists = false,
+				title = nil,
+				timestamp = get_timestamp(),
+			}
+			callback(false, nil)
+			return
+		end
+
+		if result.stdout then
 			-- Extract HTTP status code from the end of response
 			local http_code = string.match(result.stdout, "(%d+)$")
 			local response_body = string.gsub(result.stdout, "%d+$", "")
@@ -102,6 +155,12 @@ end
 
 -- Validate a changeset number exists
 function M.validate_changeset(changeset_num, callback)
+	-- Input validation
+	if not changeset_num or changeset_num == "" or not string.match(changeset_num, "^%d+$") then
+		callback(false, nil)
+		return
+	end
+
 	local cache_key = "changeset_" .. changeset_num
 
 	-- Check cache first
@@ -110,14 +169,39 @@ function M.validate_changeset(changeset_num, callback)
 		return
 	end
 
+	-- Rate limiting - simple throttling
+	local current_time = vim.loop.hrtime() / 1000000 -- Convert to milliseconds
+	if (current_time - last_request_time) < min_request_interval then
+		vim.defer_fn(function()
+			M.validate_changeset(changeset_num, callback)
+		end, min_request_interval)
+		return
+	end
+	last_request_time = current_time
+
+	-- Clean cache periodically
+	cleanup_cache()
+
 	-- Make API request
 	local url = "https://core.trac.wordpress.org/changeset/" .. changeset_num
 
-	vim.system({ "curl", "-s", "-w", "%{http_code}", url }, {}, function(result)
+	vim.system({ "curl", "-s", "-w", "%{http_code}", "--max-time", "10", url }, {}, function(result)
 		local exists = false
 		local message = nil
 
-		if result.code == 0 and result.stdout then
+		-- Handle curl errors
+		if result.code ~= 0 then
+			-- Network error - cache as failed but don't show error to user
+			cache[cache_key] = {
+				exists = false,
+				message = nil,
+				timestamp = get_timestamp(),
+			}
+			callback(false, nil)
+			return
+		end
+
+		if result.stdout then
 			-- Extract HTTP status code from the end of response
 			local http_code = string.match(result.stdout, "(%d+)$")
 			local response_body = string.gsub(result.stdout, "%d+$", "")
@@ -144,11 +228,6 @@ function M.validate_changeset(changeset_num, callback)
 								:gsub("^%s+", "") -- Trim leading
 								:gsub("%s+$", "") -- Trim trailing
 								:gsub("%.+$", ".") -- Normalize ending periods
-
-							-- Limit length to prevent very long messages
-							if #message > 80 then
-								message = message:sub(1, 77) .. "..."
-							end
 						end
 					end
 
