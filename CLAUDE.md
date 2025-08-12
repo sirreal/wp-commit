@@ -11,6 +11,7 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
 ### Core Components
 
 - **`lua/wp-commit-msg/`** - Main plugin logic
+
   - `init.lua` - Plugin entry point and setup
   - `linter.lua` - Core linting engine with WordPress-specific rules
   - `config.lua` - Configuration management and defaults
@@ -25,6 +26,7 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
 ### Key Features to Implement
 
 1. **Real-time Linting Rules:**
+
    - Summary line validation (50-70 character limit, component prefix format)
    - Proper capitalization and punctuation
    - Code/hook backtick validation
@@ -35,11 +37,13 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
    - Follow-up/Reviewed by/Merges section validation
 
 2. **API Integration Features:**
+
    - Show inline hints with ticket/changeset titles on hover or as virtual text
    - Cache validation results to avoid repeated API calls
    - Graceful degradation when offline or API unavailable
 
 3. **Integration:**
+
    - Automatic activation for commit message buffers (COMMIT_EDITMSG, svn-commit.tmp)
    - Works with git-svn and native svn workflows
    - Configurable via Neovim's standard config system
@@ -54,7 +58,8 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
 ## Parsing Strategy
 
 The plugin uses **Treesitter** with a custom `tree-sitter-wordpress-commit` grammar for parsing WordPress commit messages. This provides:
-- Robust syntax highlighting via treesitter queries  
+
+- Robust syntax highlighting via treesitter queries
 - AST-based linting for accurate validation
 - Incremental parsing for performance
 - Better error recovery for malformed messages
@@ -112,6 +117,7 @@ Fixes #30000. See #20202, #105.
 ## Target Users
 
 WordPress core committers who:
+
 - Use Neovim as their primary editor
 - Commit via `svn commit` (which opens `$SVN_EDITOR`)
 - Need assistance following the strict WordPress commit message format
@@ -127,11 +133,13 @@ WordPress core committers who:
 ## WordPress Integration
 
 ### API Endpoints
+
 - **Tickets:** `https://core.trac.wordpress.org/ticket/123?format=csv` (returns CSV with id, summary, etc.)
 - **Changesets:** `https://core.trac.wordpress.org/changeset/60487` (parse HTML `#overview` dl element for commit message)
 - **User Profiles:** `https://profiles.wordpress.org/username` (HEAD request, check 2xx vs non-2xx status)
 
 ### Validation Features
+
 - Check if ticket/changeset numbers exist
 - Validate WordPress.org usernames in props section
 - Extract and display titles/names as virtual text or hover info
@@ -140,9 +148,42 @@ WordPress core committers who:
 - Show appropriate error messages for invalid references
 
 ### Examples
+
 ```
 Fixes #12345.           → "Fix memory leak in widget handling"
 Follow-up to [60487].   → "Component: Brief summary of changeset"
 See #20202.             → "Enhancement: Add new filter hook"
 Props jonsurrell, dmsnell. → "✓ jonsurrell ✓ dmsnell" (or ✗ for invalid users)
 ```
+
+## Known Issues
+
+### API Request Failures on Bulk Validation
+
+**Issue:** When a commit message is loaded with multiple references (tickets, changesets, usernames), concurrent API requests can fail due to rate limiting or network issues, causing valid references to be incorrectly cached as invalid.
+
+**Symptoms:**
+
+- Valid tickets showing ✗ instead of ✓
+- Valid WordPress.org usernames marked as invalid
+- Valid changesets not resolving properly
+
+**Workaround:**
+
+- Edit the commit message (add/remove a character) to trigger re-validation
+- Or restart Neovim to clear the cache
+
+**Root Cause:** The current implementation makes multiple concurrent HTTP requests when validating complex commit messages. Some requests may fail due to:
+
+- Network timeouts (10s limit)
+- API rate limiting
+- Concurrent request limits
+- Network instability
+
+**Potential Solutions:**
+
+- Implement exponential backoff retry logic for failed requests
+- Add sequential request queuing instead of concurrent requests
+- Distinguish between network failures and actual invalid references
+- Add manual cache invalidation command
+- Implement request batching where possible
