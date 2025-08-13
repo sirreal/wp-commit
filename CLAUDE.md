@@ -10,7 +10,7 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
 
 ### Core Components
 
-- **`lua/wp-commit-msg/`** - Main plugin logic
+- **`lua/wp-commit/`** - Main plugin logic
 
   - `init.lua` - Plugin entry point and setup
   - `linter.lua` - Core linting engine with WordPress-specific rules
@@ -21,7 +21,7 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
 
 - **`queries/`** - Treesitter queries for syntax highlighting and parsing
 
-- **`plugin/wp-commit-msg.vim`** - Vim plugin integration and autocommands
+- **`plugin/wp-commit.vim`** - Vim plugin integration and autocommands
 
 ### Key Features to Implement
 
@@ -97,7 +97,7 @@ Fixes #30000. See #20202, #105.
 
 ```
 ├── lua/
-│   └── wp-commit-msg/
+│   └── wp-commit/
 │       ├── init.lua          # Main plugin entry
 │       ├── linter.lua        # Core linting logic
 │       ├── config.lua        # Configuration
@@ -108,9 +108,9 @@ Fixes #30000. See #20202, #105.
 │   ├── highlights.scm        # Syntax highlighting queries
 │   └── locals.scm           # Additional treesitter queries
 ├── plugin/
-│   └── wp-commit-msg.vim     # Vim integration
+│   └── wp-commit.vim     # Vim integration
 ├── doc/
-│   └── wp-commit-msg.txt     # Neovim help documentation
+│   └── wp-commit.txt     # Neovim help documentation
 └── README.md                 # Installation and usage
 ```
 

@@ -1,9 +1,9 @@
 local M = {}
-local trac = require("wp-commit-msg.trac")
-local profiles = require("wp-commit-msg.profiles")
+local trac = require("wp-commit.trac")
+local profiles = require("wp-commit.profiles")
 
 -- Namespace for virtual text
-local virt_ns = vim.api.nvim_create_namespace("wp-commit-msg-virtual")
+local virt_ns = vim.api.nvim_create_namespace("wp-commit-virtual")
 
 -- Debounce timer for validation
 local validation_timer = nil
@@ -109,7 +109,7 @@ function M.validate_buffer(bufnr)
 		M.validate_references(lines, diagnostics)
 
 		-- Set diagnostics
-		vim.diagnostic.set(vim.api.nvim_create_namespace("wp-commit-msg"), bufnr, diagnostics)
+		vim.diagnostic.set(vim.api.nvim_create_namespace("wp-commit"), bufnr, diagnostics)
 	end)
 end
 
@@ -122,7 +122,7 @@ function M.validate_summary_line(lines, diagnostics)
 			end_col = 0,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Summary line is required",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 		return
 	end
@@ -137,7 +137,7 @@ function M.validate_summary_line(lines, diagnostics)
 			end_col = #summary_line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Summary line must start with 'Component: Brief summary.'",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -149,7 +149,7 @@ function M.validate_summary_line(lines, diagnostics)
 			end_col = #summary_line,
 			severity = vim.diagnostic.severity.WARN,
 			message = "Summary line should be 50-70 characters (currently " .. #summary_line .. ")",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -162,7 +162,7 @@ function M.validate_summary_line(lines, diagnostics)
 			end_col = #component + 3,
 			severity = vim.diagnostic.severity.WARN,
 			message = "Summary should start with capital letter",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -174,7 +174,7 @@ function M.validate_summary_line(lines, diagnostics)
 			end_col = #summary_line,
 			severity = vim.diagnostic.severity.WARN,
 			message = "Summary should end with period",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 end
@@ -223,7 +223,7 @@ function M.validate_structure(lines, diagnostics)
 				end_col = #section.line,
 				severity = vim.diagnostic.severity.ERROR,
 				message = "Sections must be in order: Follow-up, Reviewed by, Merges, Props, Fixes/See",
-				source = "wp-commit-msg",
+				source = "wp-commit",
 			})
 		end
 
@@ -250,7 +250,7 @@ function M.validate_structure(lines, diagnostics)
 				end_col = 0,
 				severity = vim.diagnostic.severity.ERROR,
 				message = "Blank line required after summary line",
-				source = "wp-commit-msg",
+				source = "wp-commit",
 			})
 		end
 	end
@@ -275,7 +275,7 @@ function M.validate_structure(lines, diagnostics)
 			end_col = #lines[see_line + 1],
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Fixes and See should be on the same line: 'Fixes #123. See #456.'",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -288,7 +288,7 @@ function M.validate_structure(lines, diagnostics)
 				end_col = 0,
 				severity = vim.diagnostic.severity.ERROR,
 				message = "Remove extra blank line - only single blank lines allowed",
-				source = "wp-commit-msg",
+				source = "wp-commit",
 			})
 		end
 	end
@@ -303,7 +303,7 @@ function M.validate_structure(lines, diagnostics)
 				end_col = 0,
 				severity = vim.diagnostic.severity.WARN,
 				message = "Add blank line before " .. section_name .. " section",
-				source = "wp-commit-msg",
+				source = "wp-commit",
 			})
 		end
 	end
@@ -366,7 +366,7 @@ function M.validate_props_line(line, lnum, diagnostics)
 			end_col = 5,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Should be 'Props' (capitalized)",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -378,7 +378,7 @@ function M.validate_props_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Props format should be 'Props username, another.'",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 		return
 	end
@@ -391,7 +391,7 @@ function M.validate_props_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Props line must end with period",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -409,7 +409,7 @@ function M.validate_props_line(line, lnum, diagnostics)
 					end_col = #line,
 					severity = vim.diagnostic.severity.WARN,
 					message = "Invalid username format: '" .. username .. "'",
-					source = "wp-commit-msg",
+					source = "wp-commit",
 				})
 			else
 				table.insert(usernames, username)
@@ -440,7 +440,7 @@ function M.validate_fixes_line(line, lnum, diagnostics)
 			end_col = 5,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Should be 'Fixes' (capitalized)",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -452,7 +452,7 @@ function M.validate_fixes_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Fixes line must contain ticket numbers like #12345",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -464,7 +464,7 @@ function M.validate_fixes_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Fixes line must end with period",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 end
@@ -479,7 +479,7 @@ function M.validate_see_line(line, lnum, diagnostics)
 			end_col = 3,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Should be 'See' (capitalized)",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -491,7 +491,7 @@ function M.validate_see_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "See line must contain ticket numbers like #12345",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -503,7 +503,7 @@ function M.validate_see_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "See line must end with period",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 end
@@ -518,7 +518,7 @@ function M.validate_followup_line(line, lnum, diagnostics)
 			end_col = 9,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Should be 'Follow-up' (capitalized)",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -530,7 +530,7 @@ function M.validate_followup_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Follow-up line must contain changeset numbers like [12345]",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -542,7 +542,7 @@ function M.validate_followup_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Follow-up line must end with period",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 end
@@ -557,7 +557,7 @@ function M.validate_reviewed_line(line, lnum, diagnostics)
 			end_col = 11,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Should be 'Reviewed by' (capitalized)",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -569,7 +569,7 @@ function M.validate_reviewed_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Reviewed by format should be 'Reviewed by username, another.'",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -581,7 +581,7 @@ function M.validate_reviewed_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Reviewed by line must end with period",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 end
@@ -596,7 +596,7 @@ function M.validate_merges_line(line, lnum, diagnostics)
 			end_col = 6,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Should be 'Merges' (capitalized)",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 
@@ -608,7 +608,7 @@ function M.validate_merges_line(line, lnum, diagnostics)
 			end_col = #line,
 			severity = vim.diagnostic.severity.ERROR,
 			message = "Merges format should be 'Merges [12345] to the x.x branch.'",
-			source = "wp-commit-msg",
+			source = "wp-commit",
 		})
 	end
 end
@@ -692,7 +692,7 @@ function M.validate_references(lines, diagnostics)
 				end_col = #line,
 				severity = vim.diagnostic.severity.WARN,
 				message = "Unpaired backticks - code should be wrapped in `backticks`",
-				source = "wp-commit-msg",
+				source = "wp-commit",
 			})
 		end
 	end

@@ -1,4 +1,4 @@
-# wp-commit-msg
+# wp-commit
 
 > ⚠️ **Use at your own risk**: This plugin is experimental and may show incorrect validation results for tickets, changesets, and usernames due to API reliability issues.
 
@@ -18,14 +18,14 @@ Add to your Neovim configuration:
 ```lua
 -- Using lazy.nvim
 {
-  "path/to/wp-commit-msg",
+  "path/to/wp-commit",
   config = function()
-    require("wp-commit-msg").setup()
+    require("wp-commit").setup()
   end,
 }
 
 -- Or in init.lua
-require("wp-commit-msg").setup()
+require("wp-commit").setup()
 ```
 
 ## Requirements

@@ -35,11 +35,11 @@ function M.setup(opts)
 
 			-- Only attach to normal buffers with proper filetype
 			if vim.api.nvim_buf_get_option(bufnr, "buftype") == "" then
-				local ok, linter = pcall(require, "wp-commit-msg.linter")
+				local ok, linter = pcall(require, "wp-commit.linter")
 				if ok then
 					linter.attach(bufnr)
 				else
-					vim.notify("wp-commit-msg: Failed to load linter module", vim.log.levels.WARN)
+					vim.notify("wp-commit: Failed to load linter module", vim.log.levels.WARN)
 				end
 			end
 		end,
