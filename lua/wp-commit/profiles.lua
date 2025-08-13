@@ -100,6 +100,14 @@ function M.validate_username(username, callback)
 				local title_match = string.match(response_body, "<title>([^<]+)</title>")
 				if title_match then
 					-- Parse: "Jon Surrell (@jonsurrell) &#8211; WordPress user profile | WordPress.org"
+					-- Decode HTML character references
+					title_match = title_match
+						:gsub("&gt;", ">")
+						:gsub("&lt;", "<")
+						:gsub("&amp;", "&")
+						:gsub("&quot;", '"')
+						:gsub("&#39;", "'")
+						:gsub("&apos;", "'")
 					local name_match = string.match(title_match, "^([^%(]+)%s*%(")
 					if name_match then
 						full_name = name_match:gsub("^%s+", ""):gsub("%s+$", "") -- trim whitespace

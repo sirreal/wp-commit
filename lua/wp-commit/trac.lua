@@ -137,6 +137,16 @@ function M.validate_ticket(ticket_num, callback)
 						exists = true
 						-- Extract title using proper CSV parsing
 						title = M.parse_csv_field(data_line, 2) -- Get second column (summary)
+						if title then
+							-- Decode HTML character references in ticket title
+							title = title
+								:gsub("&gt;", ">")
+								:gsub("&lt;", "<")
+								:gsub("&amp;", "&")
+								:gsub("&quot;", '"')
+								:gsub("&#39;", "'")
+								:gsub("&apos;", "'")
+						end
 					end
 				end
 			end
@@ -224,6 +234,12 @@ function M.validate_changeset(changeset_num, callback)
 							-- Clean up the message text
 							message = first_p
 								:gsub("<[^>]+>", "") -- Remove any remaining HTML tags
+								:gsub("&gt;", ">") -- Decode HTML character references
+								:gsub("&lt;", "<")
+								:gsub("&amp;", "&")
+								:gsub("&quot;", '"')
+								:gsub("&#39;", "'")
+								:gsub("&apos;", "'")
 								:gsub("%s+", " ") -- Normalize whitespace
 								:gsub("^%s+", "") -- Trim leading
 								:gsub("%s+$", "") -- Trim trailing
@@ -238,7 +254,16 @@ function M.validate_changeset(changeset_num, callback)
 							local message_match =
 								string.match(overview_match, "<dt>Message:</dt>%s*<dd[^>]*>%s*([^<]+)")
 							if message_match then
-								message = message_match:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+								message = message_match
+									:gsub("&gt;", ">") -- Decode HTML character references
+									:gsub("&lt;", "<")
+									:gsub("&amp;", "&")
+									:gsub("&quot;", '"')
+									:gsub("&#39;", "'")
+									:gsub("&apos;", "'")
+									:gsub("%s+", " ") -- Normalize whitespace
+									:gsub("^%s+", "") -- Trim leading
+									:gsub("%s+$", "") -- Trim trailing
 							end
 						end
 					end
