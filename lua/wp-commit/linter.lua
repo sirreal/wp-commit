@@ -232,6 +232,31 @@ function M.validate_structure(lines, diagnostics)
 		end
 	end
 
+	-- Check for incorrect blank lines between Props and Fixes/See sections
+	for i = 1, #sections - 1 do
+		local current_section = sections[i]
+		local next_section = sections[i + 1]
+
+		if current_section.type == "props" and next_section.type == "tickets" then
+			-- Props and tickets should be on consecutive lines (no blank line between)
+			if next_section.lnum > current_section.lnum + 1 then
+				-- There's a gap, check if it's a blank line
+				for gap_line = current_section.lnum + 1, next_section.lnum - 1 do
+					if lines[gap_line + 1] == "" then -- +1 because lines is 1-indexed but lnum is 0-indexed
+						table.insert(diagnostics, {
+							lnum = gap_line,
+							col = 0,
+							end_col = 0,
+							severity = vim.diagnostic.severity.ERROR,
+							message = "Remove blank line between Props and Fixes/See sections",
+							source = "wp-commit",
+						})
+					end
+				end
+			end
+		end
+	end
+
 	-- Check blank line after summary (line 2 should be blank if description exists)
 	if #lines >= 3 and lines[2] ~= "" then
 		-- Only require blank line if there's actual description content
@@ -294,17 +319,28 @@ function M.validate_structure(lines, diagnostics)
 	end
 
 	-- Check blank lines before major sections
-	for _, section in ipairs(sections) do
+	for i, section in ipairs(sections) do
 		if section.lnum > 0 and lines[section.lnum] ~= "" then
-			local section_name = section.type == "tickets" and "ticket references" or section.type
-			table.insert(diagnostics, {
-				lnum = section.lnum - 1,
-				col = 0,
-				end_col = 0,
-				severity = vim.diagnostic.severity.WARN,
-				message = "Add blank line before " .. section_name .. " section",
-				source = "wp-commit",
-			})
+			-- Special case: Props section should not have blank line before tickets section
+			local skip_blank_line = false
+			if section.type == "tickets" and i > 1 then
+				local prev_section = sections[i - 1]
+				if prev_section.type == "props" and prev_section.lnum == section.lnum - 1 then
+					skip_blank_line = true
+				end
+			end
+
+			if not skip_blank_line then
+				local section_name = section.type == "tickets" and "ticket references" or section.type
+				table.insert(diagnostics, {
+					lnum = section.lnum - 1,
+					col = 0,
+					end_col = 0,
+					severity = vim.diagnostic.severity.WARN,
+					message = "Add blank line before " .. section_name .. " section",
+					source = "wp-commit",
+				})
+			end
 		end
 	end
 end
