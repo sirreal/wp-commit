@@ -229,10 +229,13 @@ function M.validate_changeset(changeset_num, callback)
 					)
 					if message_section then
 						-- Extract first paragraph or line of the commit message
-						local first_p = string.match(message_section, "<p[^>]*>%s*([^<]+)")
-						if first_p then
+						-- Try matching until <br first, then try </p>
+						local match = string.match(message_section, "<p[^>]*>%s*(.-)<br[ />]")
+							or string.match(message_section, "<p[^>]*>%s*(.-)</p>")
+
+						if match then
 							-- Clean up the message text
-							message = first_p
+							message = match
 								:gsub("<[^>]+>", "") -- Remove any remaining HTML tags
 								:gsub("&gt;", ">") -- Decode HTML character references
 								:gsub("&lt;", "<")
