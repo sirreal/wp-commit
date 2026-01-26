@@ -3,6 +3,7 @@ local M = {}
 -- Default configuration
 local default_config = {
 	enabled = true,
+	debug = false, -- Enable debug logging for HTTP requests
 	additional_patterns = {},
 }
 
@@ -35,6 +36,9 @@ function M.setup(opts)
 
 			-- Only attach to normal buffers with proper filetype
 			if vim.api.nvim_buf_get_option(bufnr, "buftype") == "" then
+				-- Enable spell checking for commit messages
+				vim.opt_local.spell = true
+
 				local ok, linter = pcall(require, "wp-commit.linter")
 				if ok then
 					linter.attach(bufnr)
