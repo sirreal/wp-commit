@@ -232,13 +232,13 @@ function M.validate_structure(lines, diagnostics)
 		end
 	end
 
-	-- Check for incorrect blank lines between Props and Fixes/See sections
+	-- Check for incorrect blank lines between grouped sections
 	for i = 1, #sections - 1 do
 		local current_section = sections[i]
 		local next_section = sections[i + 1]
 
+		-- Props and tickets should be on consecutive lines (no blank line between)
 		if current_section.type == "props" and next_section.type == "tickets" then
-			-- Props and tickets should be on consecutive lines (no blank line between)
 			if next_section.lnum > current_section.lnum + 1 then
 				-- There's a gap, check if it's a blank line
 				for gap_line = current_section.lnum + 1, next_section.lnum - 1 do
@@ -249,6 +249,24 @@ function M.validate_structure(lines, diagnostics)
 							end_col = 0,
 							severity = vim.diagnostic.severity.ERROR,
 							message = "Remove blank line between Props and Fixes/See sections",
+							source = "wp-commit",
+						})
+					end
+				end
+			end
+		end
+
+		-- Reviewed by and Merges should be on consecutive lines (no blank line between)
+		if current_section.type == "reviewed" and next_section.type == "merges" then
+			if next_section.lnum > current_section.lnum + 1 then
+				for gap_line = current_section.lnum + 1, next_section.lnum - 1 do
+					if lines[gap_line + 1] == "" then
+						table.insert(diagnostics, {
+							lnum = gap_line,
+							col = 0,
+							end_col = 0,
+							severity = vim.diagnostic.severity.ERROR,
+							message = "Remove blank line between Reviewed by and Merges sections",
 							source = "wp-commit",
 						})
 					end
@@ -321,11 +339,21 @@ function M.validate_structure(lines, diagnostics)
 	-- Check blank lines before major sections
 	for i, section in ipairs(sections) do
 		if section.lnum > 0 and lines[section.lnum] ~= "" then
-			-- Special case: Props section should not have blank line before tickets section
+			-- Special cases: sections that should NOT have blank line before them
 			local skip_blank_line = false
+
+			-- Props + tickets are grouped (no blank before tickets if after props)
 			if section.type == "tickets" and i > 1 then
 				local prev_section = sections[i - 1]
 				if prev_section.type == "props" and prev_section.lnum == section.lnum - 1 then
+					skip_blank_line = true
+				end
+			end
+
+			-- Reviewed by + Merges are grouped (no blank before merges if after reviewed)
+			if section.type == "merges" and i > 1 then
+				local prev_section = sections[i - 1]
+				if prev_section.type == "reviewed" and prev_section.lnum == section.lnum - 1 then
 					skip_blank_line = true
 				end
 			end
@@ -459,7 +487,7 @@ function M.validate_props_line(line, lnum, diagnostics)
 			profiles.validate_usernames(usernames, function(results)
 				-- Only apply results if this validation is still current
 				if current_gen == validation_generation then
-					M.update_props_virtual_text(bufnr, lnum, usernames, results)
+					M.update_username_virtual_text(bufnr, lnum, usernames, results)
 				end
 			end)
 		end
@@ -619,6 +647,37 @@ function M.validate_reviewed_line(line, lnum, diagnostics)
 			message = "Reviewed by line must end with period",
 			source = "wp-commit",
 		})
+	end
+
+	-- Extract and validate usernames
+	local reviewed_content = string.match(line, "^Reviewed by%s+(.+)%.$")
+	if reviewed_content then
+		local usernames = {}
+		for username in string.gmatch(reviewed_content, "([^,]+)") do
+			username = string.match(username, "^%s*(.-)%s*$") -- trim spaces
+			if not string.match(username, "^[a-zA-Z0-9_%-]+$") then
+				table.insert(diagnostics, {
+					lnum = lnum,
+					col = 0,
+					end_col = #line,
+					severity = vim.diagnostic.severity.WARN,
+					message = "Invalid username format: '" .. username .. "'",
+					source = "wp-commit",
+				})
+			else
+				table.insert(usernames, username)
+			end
+		end
+
+		if #usernames > 0 then
+			local bufnr = vim.api.nvim_get_current_buf()
+			local current_gen = validation_generation
+			profiles.validate_usernames(usernames, function(results)
+				if current_gen == validation_generation then
+					M.update_username_virtual_text(bufnr, lnum, usernames, results)
+				end
+			end)
+		end
 	end
 end
 
@@ -801,8 +860,8 @@ end
 
 -- Virtual text functions for API validation results
 
--- Update virtual text for Props usernames
-function M.update_props_virtual_text(bufnr, lnum, usernames, results)
+-- Update virtual text for usernames (Props, Reviewed by)
+function M.update_username_virtual_text(bufnr, lnum, usernames, results)
 	vim.schedule(function()
 		local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
 
