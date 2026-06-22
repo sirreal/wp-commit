@@ -735,20 +735,20 @@ function M.count_and_validate_references(lines, diagnostics, bufnr, generation)
 
 			-- Validate all tickets
 			for _, ticket_num in ipairs(tickets) do
-				trac.validate_ticket(ticket_num, function(exists, title)
+				trac.validate_ticket(ticket_num, function(exists, title, status)
 					-- Only apply results if this validation is still current
 					if generation == validation_generation then
-						M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+						M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title, status)
 					end
 				end)
 			end
 
 			-- Validate all changesets
 			for _, changeset_num in ipairs(changesets) do
-				trac.validate_changeset(changeset_num, function(exists, message)
+				trac.validate_changeset(changeset_num, function(exists, message, status)
 					-- Only apply results if this validation is still current
 					if generation == validation_generation then
-						M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+						M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message, status)
 					end
 				end)
 			end
@@ -860,6 +860,24 @@ end
 
 -- Virtual text functions for API validation results
 
+local function get_trac_unknown_message(status)
+	if status == "auth_missing" then
+		return "Trac cookie not configured"
+	elseif status == "cookie_unreadable" then
+		return "Trac cookie file is not readable"
+	elseif status == "cookie_invalid_format" then
+		return "Trac cookie file format is not supported"
+	elseif status == "auth_failed" then
+		return "Trac auth failed; cookie may be expired"
+	elseif status == "network" then
+		return "Trac unavailable; not checked"
+	elseif status == "unexpected_response" then
+		return "Trac returned an unexpected response"
+	end
+
+	return "Trac reference not checked"
+end
+
 -- Update virtual text for usernames (Props, Reviewed by)
 function M.update_username_virtual_text(bufnr, lnum, usernames, results)
 	vim.schedule(function()
@@ -907,7 +925,7 @@ function M.update_username_virtual_text(bufnr, lnum, usernames, results)
 end
 
 -- Update virtual text for ticket validation
-function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
+function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title, status)
 	vim.schedule(function()
 		local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
 
@@ -916,26 +934,32 @@ function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
 		local start_col, end_col = string.find(line_text, vim.pesc(pattern))
 
 		if start_col and end_col then
-			local status = exists and " ✓" or " ✗"
-			local hl = exists and "DiagnosticOk" or "DiagnosticError"
+			local state = status or (exists and "valid" or "not_found")
+			local marker = state == "valid" and " ✓" or state == "not_found" and " ✗" or " ?"
+			local hl = state == "valid" and "DiagnosticOk"
+				or state == "not_found" and "DiagnosticError"
+				or "DiagnosticWarn"
 
 			-- Add status right after the ticket reference
 			vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, end_col, {
-				virt_text = { { status, hl } },
+				virt_text = { { marker, hl } },
 				virt_text_pos = "inline",
 			})
 
 			-- Add detailed info to virtual lines cache (using start_col for ordering)
 			local content
-			if exists and title then
+			if state == "valid" and title then
 				content = " → " .. title
 				hl = "DiagnosticInfo"
-			elseif exists then
+			elseif state == "valid" then
 				content = " → Ticket #" .. ticket_num .. " exists"
 				hl = "DiagnosticOk"
-			else
+			elseif state == "not_found" then
 				content = " → Ticket #" .. ticket_num .. " not found"
 				hl = "DiagnosticError"
+			else
+				content = " → Ticket #" .. ticket_num .. " not checked (" .. get_trac_unknown_message(state) .. ")"
+				hl = "DiagnosticWarn"
 			end
 
 			M.add_virtual_line(bufnr, lnum, start_col, content, hl)
@@ -944,7 +968,7 @@ function M.update_ticket_virtual_text(bufnr, lnum, ticket_num, exists, title)
 end
 
 -- Update virtual text for changeset validation
-function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message)
+function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, message, status)
 	vim.schedule(function()
 		local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
 
@@ -953,26 +977,36 @@ function M.update_changeset_virtual_text(bufnr, lnum, changeset_num, exists, mes
 		local start_col, end_col = string.find(line_text, pattern)
 
 		if start_col and end_col then
-			local status = exists and " ✓" or " ✗"
-			local hl = exists and "DiagnosticOk" or "DiagnosticError"
+			local state = status or (exists and "valid" or "not_found")
+			local marker = state == "valid" and " ✓" or state == "not_found" and " ✗" or " ?"
+			local hl = state == "valid" and "DiagnosticOk"
+				or state == "not_found" and "DiagnosticError"
+				or "DiagnosticWarn"
 
 			-- Add status right after the changeset reference
 			vim.api.nvim_buf_set_extmark(bufnr, virt_ns, lnum, end_col, {
-				virt_text = { { status, hl } },
+				virt_text = { { marker, hl } },
 				virt_text_pos = "inline",
 			})
 
 			-- Add detailed info to virtual lines cache (using start_col for ordering)
 			local content
-			if exists and message then
+			if state == "valid" and message then
 				content = " → " .. message
 				hl = "DiagnosticInfo"
-			elseif exists then
+			elseif state == "valid" then
 				content = " → Changeset [" .. changeset_num .. "] exists"
 				hl = "DiagnosticOk"
-			else
+			elseif state == "not_found" then
 				content = " → Changeset [" .. changeset_num .. "] not found"
 				hl = "DiagnosticError"
+			else
+				content = " → Changeset ["
+					.. changeset_num
+					.. "] not checked ("
+					.. get_trac_unknown_message(state)
+					.. ")"
+				hl = "DiagnosticWarn"
 			end
 
 			M.add_virtual_line(bufnr, lnum, start_col, content, hl)
