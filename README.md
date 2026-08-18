@@ -62,7 +62,8 @@ Component: Brief summary.
 
 Longer description if needed.
 
-Follow-up to [12345].
+Follow-up to r12345.
+
 Props username1, username2.
 Fixes #67890. See #12345.
 ```

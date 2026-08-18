@@ -32,9 +32,10 @@ This is a Neovim plugin for linting WordPress commit messages according to the [
    - Code/hook backtick validation
    - Props section formatting with WordPress.org profile validation
    - Ticket reference validation (#123 format) with existence checking
-   - Changeset reference validation ([123] format) with existence checking
+   - Changeset reference validation (r123 format) with existence checking
    - Required blank lines between sections
    - Follow-up/Reviewed by/Merges section validation
+   - Developed in/Discussed in link line validation
 
 2. **API Integration Features:**
 
@@ -64,7 +65,7 @@ The plugin uses **Treesitter** with a custom `tree-sitter-wordpress-commit` gram
 - Incremental parsing for performance
 - Better error recovery for malformed messages
 
-Key elements parsed: component prefixes, ticket references (#123), changeset references ([123]), WordPress.org usernames in props, code spans (`hooks`), section keywords (Props, Fixes, etc.), and proper section boundaries.
+Key elements parsed: component prefixes, ticket references (#123), changeset references (r123), WordPress.org usernames in props, code spans (`hooks`), `{{{ }}}` code blocks, section keywords (Props, Fixes, etc.), and proper section boundaries.
 
 ## WordPress Commit Message Format
 
@@ -77,10 +78,20 @@ Longer description with more details, such as a `new_hook` being introduced with
 
 More paragraphs can be added as needed.
 
-Follow-up to [27195], [41062].
+Example usage:
 
-Reviewed by committer-name.
-Merges [26851] to the x.x branch.
+{{{
+// Multi-line code snippet.
+$add_filter( 'some_new_filter', 'some_filter_callback' );
+}}}
+
+Developed in: https://github.com/WordPress/wordpress-develop/pull/6395
+Discussed in: https://wordpress.slack.com/archives/C18723MQ8/p1782986746738579
+
+Follow-up to r27195, r41062.
+
+Reviewed by a-fellow-committer, maybe-multiple.
+Merges r26851 to the x.x branch.
 
 Props person, another.
 Fixes #30000. See #20202, #105.
@@ -151,7 +162,7 @@ WordPress core committers who:
 
 ```
 Fixes #12345.           → "Fix memory leak in widget handling"
-Follow-up to [60487].   → "Component: Brief summary of changeset"
+Follow-up to r60487.    → "Component: Brief summary of changeset"
 See #20202.             → "Enhancement: Add new filter hook"
 Props jonsurrell, dmsnell. → "✓ jonsurrell ✓ dmsnell" (or ✗ for invalid users)
 ```
